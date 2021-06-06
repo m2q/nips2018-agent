@@ -6,6 +6,66 @@
 
 using namespace bboard;
 
+int ChooseItemOuter(int tmp)
+{
+    if(tmp > 2 || tmp == 0)
+    {
+        return Item::PASSAGE;
+    }
+    else if(tmp == 2)
+    {
+        return Item::WOOD;
+    }
+    else if(tmp == 1)
+    {
+        return Item::RIGID;
+    }
+    return Item::PASSAGE;
+}
+
+// TODO: Replace with state import
+/**
+ * @brief InitBoardItems Original InitBoard, Test cases were made
+ * specifically for this board config.
+ */
+void InitBoardItems(State& result, int seed)
+{
+    std::mt19937_64 rng(seed);
+    std::uniform_int_distribution<int> intDist(0,6);
+
+    FixedQueue<int, BOARD_SIZE * BOARD_SIZE> q;
+
+    for(int i = 0; i < BOARD_SIZE; i++)
+    {
+        for(int  j = 0; j < BOARD_SIZE; j++)
+        {
+            int tmp = intDist(rng);
+            result.items[i][j] = ChooseItemOuter(tmp);
+
+            if(IS_WOOD(result.items[i][j]))
+            {
+                q.AddElem(j + BOARD_SIZE * i);
+            }
+        }
+    }
+
+    std::uniform_int_distribution<int> idxSample(0, q.count - 1);
+    std::uniform_int_distribution<int> choosePwp(1, 3);
+    int total = 0;
+    while(true)
+    {
+        int idx = q[idxSample(rng)];
+        if((result.items[0][idx] & 0xFF) == 0)
+        {
+            result.items[0][idx] += choosePwp(rng);
+            total++;
+        }
+
+        if(total >= float(q.count)/2)
+            break;
+    }
+}
+
 TEST_CASE("IsAdjacent", "[strategy]")
 {
     std::unique_ptr<bboard::State> s = std::make_unique<bboard::State>();
@@ -49,7 +109,7 @@ TEST_CASE("Fill RMap", "[strategy]")
     {
         for(int x = 0; x < BOARD_SIZE; x++)
         {
-            if(s->board[y][x] == Item::RIGID)
+            if(s->items[y][x] == Item::RIGID)
             {
                 REQUIRE(!strategy::IsReachable(r, x, y));
             }

@@ -1,0 +1,16 @@
+name: build
+
+on:
+  push:
+    branches: [ master, feature/CI ]
+  pull_request:
+    branches: [ master, feature/CI ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - run: bash build.sh

@@ -9,6 +9,21 @@
 #include <iomanip>
 
 #include "bboard.hpp"
+#include "agents.hpp"
+
+using namespace agents;
+
+template <typename AgentType=SimpleAgent>
+std::array<AgentType, 4> CreateAgents(std::mt19937& rng)
+{
+    return {AgentType(rng()), AgentType(rng()), AgentType(rng()), AgentType(rng())};
+}
+
+template <typename AgentType>
+std::array<bboard::Agent*, 4> ToPointerArray(std::array<AgentType, 4> &agents)
+{
+    return {&agents[0], &agents[1], &agents[2], &agents[3]};
+}
 
 template<class T>
 void RecursiveCommas(std::ostream& os, T n)

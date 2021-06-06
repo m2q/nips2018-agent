@@ -132,9 +132,8 @@ void SortDirections(FixedQueue<Move, MOVE_COUNT>& q,
                     FixedQueue<Position, X>& p, int x, int y)
 {
     int moves = q.count;
-    int totalRemoves = 0;
 
-    for(int i = 0; i < moves && totalRemoves < MOVE_COUNT; i++)
+    for(int i = 0, totalSteps = 0; totalSteps < moves; i++, totalSteps++)
     {
         Position pos = util::DesiredPosition(x, y, q[i]);
         for(int j = 0; j < p.count; j++)
@@ -144,7 +143,6 @@ void SortDirections(FixedQueue<Move, MOVE_COUNT>& q,
                 q.RemoveAt(i);
                 q.AddElem(q[i]);
                 i--;
-                totalRemoves++;
                 break;
             }
         }

@@ -27,12 +27,9 @@ double timeMethod(int times, F func, Args&&... args)
     return total.count();
 }
 
-void Proxy(bboard::Environment& s)
+void Step(bboard::Environment& s)
 {
-    if(!s.IsDone())
-    {
-        s.Step();
-    }
+    s.Step();
 }
 
 #define TESTING_AGENT agents::SimpleAgent
@@ -63,7 +60,7 @@ TEST_CASE("Step Function", "[performance]")
         env.MakeGame({&a[0], &a[1], &a[2], &a[3]});
         if(!THREADING)
         {
-            t += timeMethod(times, Proxy, env);
+            t += timeMethod(times, Step, env);
             totalSteps += env.GetState().timeStep; //update the amount
         }
         else
@@ -107,6 +104,51 @@ TEST_CASE("Step Function", "[performance]")
               << "Tested with:                     "
               << type_name<decltype(b)>()
               << "\nTime: " << t/100.0 << "\n";
+
+    REQUIRE(1);
+}
+
+TEST_CASE("Episode Steps", "[performance]")
+{
+    int numEpisodes = 2000;
+    int totalSteps = 0;
+
+    int seed = 42;
+    std::mt19937 rng(seed);
+
+    double elapsedMs = 0;
+
+    for(int i = 0; i < numEpisodes; i++)
+    {
+        std::array<SimpleAgent, 4> r = CreateAgents<SimpleAgent>(rng);
+
+        // create an environment
+        bboard::Environment e;
+
+        // initializes the game/board/agents
+        e.MakeGame({&r[0], &r[1], &r[2], &r[3]}, bboard::GameMode::FreeForAll, (int)rng());
+
+        auto t1 = std::chrono::high_resolution_clock::now();
+        e.RunGame(800, false, false);
+        totalSteps += e.GetState().timeStep;
+        elapsedMs += std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - t1).count();
+    }
+
+    std::string tst = "Episode step performance results:\n";
+    std::cout << std::endl
+              << FGRN(tst)
+              << "Episode count: " << numEpisodes
+              << std::endl
+              << "Step count: " << totalSteps
+              << std::endl;
+
+    std::cout << "Average step time: " << (elapsedMs / totalSteps) * 1000 << " us";
+
+    TESTING_AGENT b;
+    std::cout << std::endl
+              << "Tested with:                     "
+              << type_name<decltype(b)>()
+              << "\nTime: " << elapsedMs << " ms\n";
 
     REQUIRE(1);
 }

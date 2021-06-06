@@ -34,69 +34,134 @@ Position DesiredPosition(const Bomb b);
  * we don't need to read the direction and find out if they've been alraedy moved
  * @return The position of the last agent/bomb that was bounced back in the chain.
  */
-Position AgentBombChainReversion(State& state, Move moves[AGENT_COUNT],
+Position AgentBombChainReversion(State* state, Position oldAgentPos[AGENT_COUNT],
                                  Position bombDest[MAX_BOMBS], int agentID);
 
 /**
  * @brief FillPositions Fills an array of Positions with positions of
  * all agents of the given state.
  */
-void FillPositions(State* s, Position p[AGENT_COUNT]);
+void FillPositions(const State* state, Position p[AGENT_COUNT]);
 
 /**
  * @brief FillDestPos Fills an array of destination positions.
- * @param s The State
+ * @param state The state
  * @param m An array of all agent moves
  * @param p The array to be filled wih dest positions
  */
-void FillDestPos(State* s, Move m[AGENT_COUNT], Position p[AGENT_COUNT]);
+void FillDestPos(const State* state, Move m[AGENT_COUNT], Position p[AGENT_COUNT]);
+
+void FillBombPositions(const Board* board, Position p[]);
 
 /**
  * @brief FillBombDestPos Fills the given array p with all desired bomb
  * positions that moving bombs are anticipating
  */
-void FillBombDestPos(State* s, Position p[MAX_BOMBS]);
+void FillBombDestPos(const Board* board, Position p[MAX_BOMBS]);
 
-/**
- * @brief FixSwitchMove Fixes the desired positions if the agents want
- * switch places in one step.
- * @param s The state
- * @param desiredPositions an array of desired positions
- */
-void FixSwitchMove(State* s, Position desiredPositions[AGENT_COUNT]);
+void FillAgentDead(const State* state, bool dead[AGENT_COUNT]);
+
+inline void _printPositions(Position p[], int size)
+{
+    for(int i = 0; i < size-1; i++)
+    {
+        std::cout << p[i] << ", ";
+    }
+    if(size > 0)
+    {
+        std::cout << p[size - 1] << std::endl;
+    }
+}
+
+template <bool useSkip>
+bool FixDestPos(Position o[], Position d[], bool collision[], const int size, bool skip[] = nullptr)
+{
+    bool foundCollision = false;
+    bool foundColInIteration;
+    // TODO: Maybe there is a better way than looping over all combinations again
+    do
+    {
+        foundColInIteration = false;
+        for(int i = 0; i < size; i++)
+        {
+            if (useSkip && skip[i])
+                continue;
+
+            for(int j = i + 1; j < size; j++)
+            {
+                if (useSkip && skip[j])
+                    continue;
+
+                // forbid moving to the same position and switching positions
+                if(d[i] == d[j] || (d[i].x == o[j].x && d[i].y == o[j].y &&
+                        d[j].x == o[i].x && d[j].y == o[i].y))
+                {
+                    foundColInIteration = true;
+                    foundCollision = true;
+                    collision[i] = true;
+                    collision[j] = true;
+                }
+            }
+        }
+
+        if(foundColInIteration)
+        {
+            for (int i = 0; i < size; i++)
+            {
+                if(collision[i]) {
+                    d[i] = o[i];
+                }
+            }
+        }
+    } while(foundColInIteration);
+
+    return foundCollision;
+}
+
+template <bool useSkip>
+bool FixDestPos(Position o[], Position d[], const int size, bool skip[] = nullptr)
+{
+    bool collision[size];
+    std::fill_n(collision, size, false);
+    return FixDestPos<useSkip>(o, d, collision, size, skip);
+}
 
 /**
  * TODO: Fill doc for dependency resolving
  *
  */
-int ResolveDependencies(State* s, Position des[AGENT_COUNT],
+int ResolveDependencies(const State* state, Position des[AGENT_COUNT],
                         int dependency[AGENT_COUNT], int chain[AGENT_COUNT]);
 
 /**
  * @brief TickFlames Counts down all flames in the flame queue
  * (and possible extinguishes the flame)
  */
-void TickFlames(State& state);
+void TickFlames(Board* board);
 
 /**
- * @brief TickBombs Counts down all bomb timers and explodes them
- * if they arrive at 10
+ * @brief TickBombs Counts down all bomb timers
  */
-void TickBombs(State& state);
+void TickBombs(Board* board);
+
+/**
+ * @brief ExplodeBombs Lights up bombs when their timer is up
+ */
+void ExplodeBombs(Board* board);
 
 /**
  * @brief MoveBombsForward moves all bombs forward that have been
  * kicked before by 1 position.
  */
-void MoveBombsForward(State& state);
+void MoveBombsForward(Board* board);
 
 /**
  * @brief ConsumePowerup Lets an agent consume a powerup
- * @param agentID The agent's ID that consumes the item
+ * @param info The agentInfo of the agent which consumes the item.
  * @param powerUp A powerup item. If it's something else,
  * this function will do nothing.
  */
-void ConsumePowerup(State& state, int agentID, int powerUp);
+void ConsumePowerup(AgentInfo& info, int powerUp);
 
 /**
  * @brief PrintDependency Prints a dependency array in a nice
@@ -120,34 +185,40 @@ void PrintDependencyChain(int dependency[AGENT_COUNT], int chain[AGENT_COUNT]);
  * @param The agent that's checked for collisions
  * @return True if there is at least one collision
  */
-bool HasDPCollision(const State& state, Position dp[AGENT_COUNT], int agentID);
+bool HasDPCollision(const State* state, Position dp[AGENT_COUNT], int agentID);
 
 /**
- * @brief HasBombCollision Checks wether a bomb collides with another bomb
- * on the board
- * @param index Only bombs with a queue index larger or equal to `index` will be
- * considered
- * @return True if the given bomb collides with another bomb
- */
-bool HasBombCollision(const State& state, const Bomb& b, int index = 0);
-
-/**
- * @brief ResolveBombMovementollision Checks if a specified bomb collides
- * with another bomb(s). If that's the case, any bombs participating in the collision
- * will keep their position and if the bomb was kicked in this round the agents
- * will be bounced back to their old position (alongside any agents that moved
- * to that agents spot in the meantime)
- * @param index Only bombs with a queue index larger or equal to `index` will be
- * considered
- */
-void ResolveBombCollision(State& state, Move moves[AGENT_COUNT],
-                          Position bombDest[MAX_BOMBS], int index = 0);
-
-/**
- * @brief ResetBombFlags Resets the "moved" flag of each bomb in the state
+ * @brief ResetBombFlags Resets the "moved" flag of each bomb on the board
  * back to false.
  */
-void ResetBombFlags(State& state);
+void ResetBombFlags(Board* board);
+
+/**
+ * @brief ResolveBombMovement Checks desired bomb positions and fixed collisions.
+ * Handles agent dependencies and resets their moves if necessary.
+ * @param state The state object
+ * @param oldAgentPos The old agent positions
+ */
+void ResolveBombMovement(State* state, Position oldAgentPos[AGENT_COUNT]);
+
+/**
+ * @brief MoveAgent Execute move m for agent i (includes laying bombs).
+ * Assumes that every agent movement conflict is already resolved and that
+ * step is called in the order of the dependencies between agents!
+ * @param state The state object
+ * @param i The index of this agent
+ * @param m The move which should be applied
+ * @param fixedDest The fixed destinations of the agent. Has a higher priority than the move
+ * @param ouroboros Whether he have an ouroboros scenario
+ */
+void MoveAgent(State* state, const int i, const Move m, const Position fixedDest, const bool ouroboros);
+
+/**
+ * @brief MoveBombs Moves the bombs (bombs explode when they hit flames).
+ * Assumes that every bomb movement conflict is already resolved!
+ * @param state The state object
+ */
+void MoveBombs(State* state);
 
 /**
  * @brief IsOutOfBounds Checks wether a given position is out of bounds
@@ -164,6 +235,50 @@ inline bool IsOutOfBounds(const int& x, const int& y)
 {
     return x < 0 || y < 0 || x >= BOARD_SIZE || y >= BOARD_SIZE;
 }
+
+/**
+ * @brief BombMovementIsBlocked Checks whether the bomb movement to the specified
+ * target is blocked (not possible)
+ */
+inline bool BombMovementIsBlocked(const Board* board, Position target)
+{
+    return IsOutOfBounds(target)
+            || IS_STATIC_MOV_BLOCK(board->items[target.y][target.x])
+            || IS_AGENT(board->items[target.y][target.x]);
+}
+
+/**
+ * @brief GetWinningTeam Get the winning team of the provided state.
+ * @param state The state
+ * @return 0 when there is no winner or the winner is in no team, team
+ * id of the winning team otherwise
+ */
+int GetWinningTeam(const State& state);
+
+/**
+ * @brief CheckTerminalState Checks whether the state is a terminal state
+ * (some agent/team won) and updates the state attributes accordingly.
+ * @param state The state
+ */
+void CheckTerminalState(State& state);
+
+/**
+ * @brief CompareTimeLeft Checks whether timeLeft of lhs is smaller than
+ * timeLeft of rhs.
+ * @param lhs A flame object
+ * @param rhs A flame object
+ * @return lhs.timeLeft < rhs.timeLeft
+ */
+bool CompareTimeLeft(const Flame& lhs, const Flame& rhs);
+
+/**
+ * @brief OptimizeFlameQueue Optimizes (ordering + board lookup ids) an
+ * potentionally unordered flame queue for faster step processing.
+ * @param board The board used to save flame ids
+ * @param flames The flame queue which should be optimized
+ * @return the remaining timeLeft
+ */
+int OptimizeFlameQueue(Board& board);
 
 }
 

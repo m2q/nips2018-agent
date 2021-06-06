@@ -14,86 +14,69 @@ namespace bboard
 /////////////////////////
 
 /**
- * @brief SpawnFlameItem Spawns a single flame item on the board
- * @param s The state on which the flames should be spawned
- * @param x The x position of the fire
- * @param y The y position of the fire
- * @param signature An auxiliary integer less than 255
- * @return Could the flame be spawned?
+ * @brief _cleanFlameSpawnPosition Checks whether a flame can be spawned at the specified position (x, y).
+ * If there exists a flame object at (x, y) with a different timeLeft, the existing flame is removed.
+ *
+ * @param flames The flames of the state
+ * @param boardItem The board item at (x, y)
+ * @param x The x coordinate
+ * @param y The y coordinate
+ * @param timeStep The current timestep
+ * @param outSpawnFlame Returns whether we can spawn a new flame at (x, y)
+ * @param outContinueFlameSpawn Returns whether the flame spawning can be continued (abort when encountering a destroyed wood block)
  */
-bool SpawnFlameItem(State& s, int x, int y, uint16_t signature = 0)
+template <int count>
+void _cleanFlameSpawnPosition(FixedQueue<Flame, count>& flames, const int boardItem, const int x, const int y, const int timeStep, bool& outSpawnFlame, bool& outContinueFlameSpawn)
 {
-    if(s.board[y][x] >= Item::AGENT0)
+    if(IS_FLAME(boardItem))
     {
-        s.Kill(s.board[y][x] - Item::AGENT0);
-    }
-    if(s.board[y][x] == Item::BOMB || s.board[y][x] >= Item::AGENT0)
-    {
-        for(int i = 0; i < s.bombs.count; i++)
+        // find the old flame object for this position
+        int flameId = bboard::FLAME_ID(boardItem);
+        // start from the back to save time finding the correct index
+        for(int i = std::min(flames.count - 1, flameId); i >= 0; i--)
         {
-            if(BMB_POS(s.bombs[i]) == (x + (y << 4)))
+            Flame& f = flames[i];
+            if(f.position.x == x && f.position.y == y)
             {
-                s.ExplodeBombAt(i);
-                break;
+                // we found the correct flame object
+                if(timeStep == f.destroyedWoodAtTimeStep)
+                {
+                    // the existing flame destroyed some wood block at this timestep, stop here
+                    outContinueFlameSpawn = false;
+                    outSpawnFlame = false;
+                    return;
+                }
+
+                if(f.timeLeft == FLAME_LIFETIME)
+                {
+                    // skip this flame, there already is a flame with the same lifetime
+                    outContinueFlameSpawn = true;
+                    outSpawnFlame = false;
+                    return;
+                }
+
+                // the lifetime changes. Due to the ordering, we have to remove the old flame
+                if(i == 0)
+                {
+                    flames.PopElem();
+                    flames[0].timeLeft += f.timeLeft;
+                }
+                else
+                {
+                    flames[i - 1].timeLeft += f.timeLeft;
+                    flames.RemoveAt(i);
+                }
+
+                outContinueFlameSpawn = true;
+                outSpawnFlame = true;
+                return;
             }
         }
     }
 
-    if(s.board[y][x] != Item::RIGID)
-    {
-        int old = s.board[y][x];
-        bool wasWood = IS_WOOD(old);
-        s.board[y][x] = Item::FLAMES + signature;
-        if(wasWood)
-        {
-            s.board[y][x]+= WOOD_POWFLAG(old); // set the powerup flag
-        }
-        return !wasWood; // if wood, then only destroy 1
-    }
-    else
-    {
-        return false;
-    }
-}
-
-int ChooseItemOuter(int tmp)
-{
-    if(tmp > 2 || tmp == 0)
-    {
-        return Item::PASSAGE;
-    }
-    else if(tmp == 2)
-    {
-        return Item::WOOD;
-    }
-    else if(tmp == 1)
-    {
-        return Item::RIGID;
-    }
-    return Item::PASSAGE;
-}
-
-int ChooseItemInner(int tmp)
-{
-    if(tmp >= 2)
-    {
-        return Item::WOOD;
-    }
-    else if(tmp == 1)
-    {
-        return Item::RIGID;
-    }
-    return Item::PASSAGE;
-}
-
-/**
- * @brief PopBomb A proxy for FixedQueue::PopElem, but also
- * takes care of agent count
- */
-inline void PopBomb(State& state)
-{
-    state.agents[BMB_ID(state.bombs[0])].bombCount--;
-    state.bombs.PopElem();
+    // simply continue spawning flames
+    outContinueFlameSpawn = true;
+    outSpawnFlame = true;
 }
 
 /**
@@ -104,165 +87,83 @@ inline bool IsOutOfBounds(const int& x, const int& y)
     return x < 0 || y < 0 || x >= BOARD_SIZE || y >= BOARD_SIZE;
 }
 
-///////////////////
-// State Methods //
-///////////////////
-
-void State::ExplodeBombAt(int i)
+void SetTeams(AgentInfo agents[AGENT_COUNT], GameMode gameMode)
 {
-    int x = BMB_POS_X(bombs[i]);
-    int y = BMB_POS_Y(bombs[i]);
-    SpawnFlame(x, y, agents[BMB_ID(bombs[i])].bombStrength);
-    agents[BMB_ID(bombs[i])].bombCount--;
-    bombs.RemoveAt(i);
-}
-
-void State::PlantBomb(int x, int y, int id, bool setItem)
-{
-    PlantBombModifiedLife(x, y,  id, BOMB_LIFETIME, setItem);
-}
-
-void State::PlantBombModifiedLife(int x, int y, int id, int lifeTime, bool setItem)
-{
-    if(agents[id].bombCount >= agents[id].maxBombCount)
+    switch(gameMode)
     {
-        return;
+        case GameMode::FreeForAll:
+            for(int i = 0; i < AGENT_COUNT; i++)
+            {
+                agents[i].team = 0;
+            }
+            break;
+        case GameMode::TwoTeams:
+            for(int i = 0; i < AGENT_COUNT; i++)
+            {
+                agents[i].team = (i % 2 == 0) ? 1 : 2;
+            }
+            break;
+        default:
+            throw std::runtime_error("Unknown game mode "
+                                     + std::to_string((int)gameMode));
     }
+}
 
-    Bomb* b = &bombs.NextPos();
-    SetBombID(*b, id);
-    SetBombPosition(*b, x, y);
-    SetBombStrength(*b, agents[id].bombStrength);
-    // TODO: velocity
-    SetBombTime(*b, lifeTime);
+///////////////////
+// Board Methods //
+///////////////////
+
+void Board::CopyFrom(const Board& board)
+{
+    std::copy_n(&board.items[0][0], BOARD_SIZE * BOARD_SIZE, &items[0][0]);
+    bombs = board.bombs;
+    flames = board.flames;
+    timeStep = board.timeStep;
+    currentFlameTime = board.currentFlameTime;
+}
+
+void Board::PlantBombModifiedLife(int x, int y, int id, int strength, int lifeTime, bool setItem)
+{
+    Bomb& b = bombs.NextPos();
+
+    SetBombID(b, id);
+    SetBombPosition(b, x, y);
+    SetBombStrength(b, strength);
+    SetBombDirection(b, Direction::IDLE);
+    SetBombFlag(b, false);
+    SetBombTime(b, lifeTime);
 
     if(setItem)
     {
-        board[y][x] = Item::BOMB;
+        items[y][x] = Item::BOMB;
     }
 
-    agents[id].bombCount++;
     bombs.count++;
 }
 
-void State::PopFlame()
+void Board::ExplodeBombAt(int i)
 {
-    Flame& f = flames[0];
-    const int s = f.strength;
-    int x = f.position.x;
-    int y = f.position.y;
+    Bomb b = bombs[i];
 
-    uint16_t signature = uint16_t(x + BOARD_SIZE * y);
-
-    // iterate over both axis (from x-s to x+s // y-s to y+s)
-    for(int i = -s; i <= s; i++)
+    // remove the bomb
+    if (i == 0)
     {
-        if(!IsOutOfBounds(x + i, y) && IS_FLAME(board[y][x + i]))
-        {
-            // only remove if this is my own flame
-            int b = board[y][x + i];
-            if(FLAME_ID(b) == signature)
-            {
-                board[y][x + i] = FlagItem(FLAME_POWFLAG(b));
-            }
-        }
-        if(!IsOutOfBounds(x, y + i) && IS_FLAME(board[y + i][x]))
-        {
-            int b = board[y + i][x];
-            if(FLAME_ID(b) == signature)
-            {
-                board[y + i][x] = FlagItem(FLAME_POWFLAG(b));
-            }
-        }
+        bombs.PopElem();
+    }
+    else
+    {
+        bombs.RemoveAt(i);
     }
 
-    flames.PopElem();
+    // spawn flames, this may trigger other explosions
+    int x = BMB_POS_X(b);
+    int y = BMB_POS_Y(b);
+    SpawnFlames(x, y, BMB_STRENGTH(b));
+
+    EventBombExploded(b);
 }
 
-Item State::FlagItem(int pwp)
-{
-    if     (pwp == 0) return Item::PASSAGE;
-    else if(pwp == 1) return Item::EXTRABOMB;
-    else if(pwp == 2) return Item::INCRRANGE;
-    else if(pwp == 3) return Item::KICK;
-    else              return Item::PASSAGE;
-}
-
-void State::ExplodeTopBomb()
-{
-    Bomb& c = bombs[0];
-    SpawnFlame(BMB_POS_X(c), BMB_POS_Y(c), BMB_STRENGTH(c));
-    PopBomb(*this);
-}
-
-void State::SpawnFlame(int x, int y, int strength)
-{
-    Flame& f = flames.NextPos();
-    f.position.x = x;
-    f.position.y = y;
-    f.strength = strength;
-    f.timeLeft = FLAME_LIFETIME;
-
-    // unique flame id
-    uint16_t signature = uint16_t((x + BOARD_SIZE * y) << 3);
-
-    flames.count++;
-
-    // kill agent possibly in origin
-    if(board[y][x] >= Item::AGENT0)
-    {
-        Kill(board[y][x] - Item::AGENT0);
-    }
-
-    // override origin
-    board[y][x] = Item::FLAMES + signature;
-
-    // right
-    for(int i = 1; i <= strength; i++)
-    {
-        if(x + i >= BOARD_SIZE) break; // bounds
-
-        if(!SpawnFlameItem(*this, x + i, y, signature))
-        {
-            break;
-        }
-    }
-
-    // left
-    for(int i = 1; i <= strength; i++)
-    {
-        if(x - i < 0) break; // bounds
-
-        if(!SpawnFlameItem(*this, x - i, y, signature))
-        {
-            break;
-        }
-    }
-
-    // top
-    for(int i = 1; i <= strength; i++)
-    {
-        if(y + i >= BOARD_SIZE) break; // bounds
-
-        if(!SpawnFlameItem(*this, x, y + i, signature))
-        {
-            break;
-        }
-    }
-
-    // bottom
-    for(int i = 1; i <= strength; i++)
-    {
-        if(y - i < 0) break; // bounds
-
-        if(!SpawnFlameItem(*this, x, y - i, signature))
-        {
-            break;
-        }
-    }
-}
-
-bool State::HasBomb(int x, int y)
+bool Board::HasBomb(int x, int y) const
 {
     for(int i = 0; i < bombs.count; i++)
     {
@@ -274,7 +175,7 @@ bool State::HasBomb(int x, int y)
     return false;
 }
 
-Bomb* State::GetBomb(int x, int y)
+Bomb* Board::GetBomb(int x, int y)
 {
     for(int i = 0; i < bombs.count; i++)
     {
@@ -285,6 +186,188 @@ Bomb* State::GetBomb(int x, int y)
     }
     return nullptr;
 }
+
+int Board::GetBombIndex(int x, int y) const
+{
+    for(int i = 0; i < bombs.count; i++)
+    {
+        if(BMB_POS_X(bombs[i]) == x && BMB_POS_Y(bombs[i]) == y)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool Board::SpawnFlameItem(int x, int y, bool isCenterFlame)
+{
+    int boardItem = items[y][x];
+
+    // stop at rigid blocks
+    if (boardItem == Item::RIGID)
+        return false;
+
+    if(boardItem >= Item::AGENT0)
+    {
+        Kill(boardItem - Item::AGENT0);
+    }
+
+    if(!isCenterFlame && (boardItem == Item::BOMB || boardItem >= Item::AGENT0))
+    {
+        // chain explosions (do not chain self)
+        // note: bombs can also be "hidden" below agents
+        for(int i = 0; i < bombs.count; i++)
+        {
+            Position bPos = BMB_POS(bombs[i]);
+            if(bPos.x == x && bPos.y == y)
+            {
+                ExplodeBombAt(i);
+                return true;
+            }
+        }
+    }
+
+    bool spawnFlame = false, continueSpawn = false;
+    _cleanFlameSpawnPosition(flames, boardItem, x, y, timeStep, spawnFlame, continueSpawn);
+
+    if(spawnFlame)
+    {
+        Flame& newFlame = flames.NextPos();
+        newFlame.position.x = x;
+        newFlame.position.y = y;
+
+        // optimization: additive timeLeft in flame queue
+        if(isCenterFlame)
+        {
+            if(flames.count == 0)
+            {
+                newFlame.timeLeft = FLAME_LIFETIME;
+            }
+            else
+            {
+                newFlame.timeLeft = FLAME_LIFETIME - currentFlameTime;
+            }
+
+            currentFlameTime = FLAME_LIFETIME;
+        }
+        else
+        {
+            newFlame.timeLeft = 0;
+        }
+
+        // update the board
+        items[y][x] = Item::FLAME + (flames.count << 3);
+
+        flames.count++;
+
+        if(IS_WOOD(boardItem))
+        {
+            // set the powerup flag
+            items[y][x] += WOOD_POWFLAG(boardItem);
+            // remember that we destroyed wood here
+            newFlame.destroyedWoodAtTimeStep = timeStep;
+            // stop here, we found wood
+            return false;
+        }
+        else
+        {
+            newFlame.destroyedWoodAtTimeStep = -1;
+        }
+    }
+
+    return continueSpawn;
+}
+
+void Board::SpawnFlames(int x, int y, int strength)
+{
+    // spawn flame in center
+    if(!SpawnFlameItem(x, y, true))
+    {
+        return;
+    }
+
+    // spawn subflames
+
+    // right
+    for(int i = 1; i <= strength; i++)
+    {
+        if(x + i >= BOARD_SIZE) break; // bounds
+
+        if(!SpawnFlameItem(x + i, y, false))
+        {
+            break;
+        }
+    }
+
+    // left
+    for(int i = 1; i <= strength; i++)
+    {
+        if(x - i < 0) break; // bounds
+
+        if(!SpawnFlameItem(x - i, y, false))
+        {
+            break;
+        }
+    }
+
+    // top
+    for(int i = 1; i <= strength; i++)
+    {
+        if(y + i >= BOARD_SIZE) break; // bounds
+
+        if(!SpawnFlameItem(x, y + i, false))
+        {
+            break;
+        }
+    }
+
+    // bottom
+    for(int i = 1; i <= strength; i++)
+    {
+        if(y - i < 0) break; // bounds
+
+        if(!SpawnFlameItem(x, y - i, false))
+        {
+            break;
+        }
+    }
+}
+
+void Board::PopFlames()
+{
+    while (flames.count > 0 && flames[0].timeLeft <= 0) {
+        Flame& f = flames[0];
+        // get the item behind the flame (can be 0 for passage)
+        Item newItem = FlagItem(FLAME_POWFLAG(items[f.position.y][f.position.x]));
+        // remove the flame
+        items[f.position.y][f.position.x] = newItem;
+        flames.PopElem();
+    }
+}
+
+Item Board::FlagItem(int pwp)
+{
+    switch (pwp) {
+        case 1: return Item::EXTRABOMB;
+        case 2: return Item::INCRRANGE;
+        case 3: return Item::KICK;
+        default: return Item::PASSAGE;
+    }
+}
+
+int Board::ItemFlag(Item item)
+{
+    switch (item) {
+        case Item::EXTRABOMB: return 1;
+        case Item::INCRRANGE: return 2;
+        case Item::KICK: return 3;
+        default: return 0;
+    }
+}
+
+///////////////////
+// State Methods //
+///////////////////
 
 int State::GetAgent(int x, int y)
 {
@@ -298,87 +381,204 @@ int State::GetAgent(int x, int y)
     return -1;
 }
 
-int State::GetBombIndex(int x, int y)
-{
-    for(int i = 0; i < bombs.count; i++)
-    {
-        if(BMB_POS_X(bombs[i]) == x && BMB_POS_Y(bombs[i]) == y)
-        {
-            return i;
-        }
-    }
-    return -1;
-}
-
 void State::PutAgent(int x, int y, int agentID)
 {
-    int b = Item::AGENT0 + agentID;
-    board[y][x] = b;
+    items[y][x] = Item::AGENT0 + agentID;
 
     agents[agentID].x = x;
     agents[agentID].y = y;
 }
 
-void State::PutAgentsInCorners(int a0, int a1, int a2, int a3)
+void State::PutAgentsInCorners(int a0, int a1, int a2, int a3, int padding)
 {
-    int b = Item::AGENT0;
+    const int min = padding;
+    const int max = BOARD_SIZE - (1 + padding);
 
-    board[0][0] = b + a0;
-    board[0][BOARD_SIZE - 1] = b + a1;
-    board[BOARD_SIZE - 1][BOARD_SIZE - 1] = b + a2;
-    board[BOARD_SIZE - 1][0] = b + a3;
+    PutAgent(min, min, a0);
+    PutAgent(max, min, a1);
+    PutAgent(max, max, a2);
+    PutAgent(min, max, a3);
+}
 
-    agents[a1].x = agents[a2].x = BOARD_SIZE - 1;
-    agents[a2].y = agents[a3].y = BOARD_SIZE - 1;
+inline int _invert(const int boardPos)
+{
+    return BOARD_SIZE - 1 - boardPos;
+}
+
+/**
+ * Selects a random element arr[i] with i in range [0, count - 1]
+ * and swaps arr[i] with arr[0]. This means arr[1:count-1] will
+ * contain the elements which were not returned yet. Repeated use
+ * with incremented arr start pointer allows for random and unique
+ * in-place selection.
+ *
+ * @tparam preserveElements Can be disabled to save a copy operation,
+ * arr[0] will not be set correctly. Only use this when you no longer
+ * need the elements after they were selected.
+ * @tparam T Type of the array.
+ * @tparam Type of the random number generator.
+ *
+ * @param arr A pointer to the start of the array.
+ * @param count The number of remaining elements.
+ * @param rng A number generator. Has to return values >= 0.
+ * @return A random element between arr[0] and arr[count - 1].
+ */
+template<bool preserveElements=true, typename T, typename RNG>
+inline T _selectRandomInPlace(T* arr, int count, RNG& rng)
+{
+    // get a random index in [0, count - 1]
+    const int index = rng() % count;
+
+    // select value
+    const T b = *(arr + index);
+
+    // remember the value at arr[0] which we did not select
+    *(arr + index) = *arr;
+    if (preserveElements)
+    {
+        // do a regular swap if we want to preserve all elements in arr
+        *arr = b;
+    }
+
+    // return the selected element
+    return b;
+}
+
+void State::Init(GameMode gameMode, long boardSeed, long agentPositionSeed, int numRigid, int numWood, int numPowerUps, int padding, int breathingRoomSize)
+{
+    std::mt19937 rng;
+
+    // initialize everything as passages
+    std::fill_n(&items[0][0], BOARD_SIZE * BOARD_SIZE, (int)Item::PASSAGE);
+
+    // insert agents at their respective positions
+    std::array<int, 4> f = {0, 1, 2, 3};
+    if(agentPositionSeed != -1)
+    {
+        rng.seed(agentPositionSeed);
+        std::shuffle(f.begin(), f.end(), rng);
+    }
+    PutAgentsInCorners(f[0], f[1], f[2], f[3], padding);
+
+    // init teams
+    SetTeams(agents, gameMode);
+
+    // create the board
+
+    rng.seed(boardSeed);
+
+    std::vector<Position> woodCoordinates;
+    woodCoordinates.reserve(numWood);
+
+    std::vector<Position> coordinates;
+    coordinates.reserve(BOARD_SIZE * (BOARD_SIZE - 4) + 8 * padding + 4);
+
+    // create a "breathing room" around agents of length freeSpaceUntil
+    // and place wooden boxes to form passages between them.
+    // The board will look like this (with padding to walls):
+    //            |   padding    |
+    // padding - [1][ ][x][x][ ][2] - padding
+    //           [ ][?]      [?][ ] <- this is the breathing room
+    //           [x]   [?][?]   [x]    (vertical and horizontal space)
+    //           [x]   [?][?]   [x] <- these are the wooden boxes separating
+    //           [ ][?]      [?][ ]    the players' breathing rooms
+    // padding - [4][ ][x][x][ ][3] - padding
+    //            |   padding    |
+
+    int tmpNorm = -1;
+    for(int i = 0; i < BOARD_SIZE; i++)
+    {
+        for(int  j = 0; j < BOARD_SIZE; j++)
+        {
+            if (i == padding || _invert(i) == padding) {
+                tmpNorm = std::min(j, _invert(j));
+            }
+            else if (j == padding || _invert(j) == padding) {
+                tmpNorm = std::min(i, _invert(i));
+            }
+
+            if(tmpNorm != -1) {
+                // breathing room
+                if (tmpNorm >= padding && tmpNorm <= breathingRoomSize) {
+                    tmpNorm = -1;
+                    continue;
+                }
+                // wooden boxes
+                else if (tmpNorm > padding) {
+                    tmpNorm = -1;
+                    items[i][j] = Item::WOOD;
+                    woodCoordinates.push_back((Position) {i, j});
+                    numWood--;
+                    continue;
+                }
+            }
+
+            // remember this coordinate, we can randomly add stuff later
+            coordinates.push_back((Position) {i, j});
+        }
+    }
+
+    int i = 0;
+    // create rigid walls
+    while (numRigid > 0) {
+        // select random coordinate
+        Position coord = _selectRandomInPlace<false>(coordinates.data() + i, coordinates.size() - i, rng);
+        i++;
+
+        // create wall
+        items[coord.y][coord.x] = Item::RIGID;
+        numRigid--;
+    }
+
+    // create wooden blocks (keep index)
+    while (numWood > 0) {
+        Position coord = _selectRandomInPlace<false>(coordinates.data() + i, coordinates.size() - i, rng);
+        i++;
+
+        items[coord.y][coord.x] = Item::WOOD;
+        woodCoordinates.push_back(coord);
+        numWood--;
+    }
+
+    i = 0;
+    std::uniform_int_distribution<int> choosePwp(1, 3);
+    // insert items
+    while (numPowerUps > 0) {
+        Position coord = _selectRandomInPlace<false>(woodCoordinates.data() + i, woodCoordinates.size() - i, rng);
+        i++;
+
+        items[coord.y][coord.x] = Item::WOOD + choosePwp(rng);
+        numPowerUps--;
+    }
+
+    // this is the initial state
+    timeStep = 0;
+    currentFlameTime = 0;
+}
+
+void State::Kill(int agentID)
+{
+    if(!agents[agentID].dead)
+    {
+        agents[agentID].dead = true;
+        aliveAgents--;
+    }
+}
+
+void State::Kill() {}
+
+void State::EventBombExploded(Bomb b)
+{
+    agents[BMB_ID(b)].bombCount--;
 }
 
 //////////////////////
 // bboard namespace //
 //////////////////////
 
-void InitState(State* result, int a0, int a1, int a2, int a3)
+void bboard::Agent::reset()
 {
-    // Randomly put obstacles
-    InitBoardItems(*result);
-    result->PutAgentsInCorners(a0, a1, a2, a3);
-}
-
-void InitBoardItems(State& result, int seed)
-{
-    std::mt19937_64 rng(seed);
-    std::uniform_int_distribution<int> intDist(0,6);
-
-    FixedQueue<int, BOARD_SIZE * BOARD_SIZE> q;
-
-    for(int i = 0; i < BOARD_SIZE; i++)
-    {
-        for(int  j = 0; j < BOARD_SIZE; j++)
-        {
-            int tmp = intDist(rng);
-            result.board[i][j] = ChooseItemOuter(tmp);
-
-            if(IS_WOOD(result.board[i][j]))
-            {
-                q.AddElem(j + BOARD_SIZE * i);
-            }
-        }
-    }
-
-    std::uniform_int_distribution<int> idxSample(0, q.count);
-    std::uniform_int_distribution<int> choosePwp(1, 4);
-    int total = 0;
-    while(true)
-    {
-        int idx = q[idxSample(rng)];
-        if((result.board[0][idx] & 0xFF) == 0)
-        {
-            result.board[0][idx] += choosePwp(rng);
-            total++;
-        }
-
-        if(total >= float(q.count)/2)
-            break;
-    }
+    // default reset does nothing
 }
 
 void StartGame(State* state, Agent* agents[AGENT_COUNT], int timeSteps)
@@ -400,10 +600,8 @@ void StartGame(State* state, Agent* agents[AGENT_COUNT], int timeSteps)
     }
 }
 
-void PrintState(State* state, bool clearConsole)
+void PrintState(const State* state, bool clearConsole)
 {
-    std::string result = "";
-
     // clears console on linux
     if(clearConsole)
         std::cout << "\033c";
@@ -412,20 +610,19 @@ void PrintState(State* state, bool clearConsole)
     {
         for(int x = 0; x < BOARD_SIZE; x++)
         {
-            int item = state->board[y][x];
-            result += PrintItem(item);
+            int item = state->items[y][x];
+            std::cout << PrintItem(item);
         }
-        std::cout << (result) << "          ";
-        result = "";
+
+        std::cout << "          ";
+
         // Print AgentInfo
         if(y < AGENT_COUNT)
         {
-            int i = y;
-            std::printf("Agent %d: %s %d  %s %d  %s %d",
-                        i,
-                        PrintItem(Item::EXTRABOMB).c_str(),state->agents[i].maxBombCount,
-                        PrintItem(Item::INCRRANGE).c_str(),state->agents[i].bombStrength,
-                        PrintItem(Item::KICK).c_str(),state->agents[i].canKick);
+            std::cout << "Agent " << y << ": ";
+            std::cout << PrintItem(Item::EXTRABOMB) << ": " << state->agents[y].maxBombCount << " ";
+            std::cout << PrintItem(Item::INCRRANGE) << ": " << state->agents[y].bombStrength << " ";
+            std::cout << PrintItem(Item::KICK) << ": " << state->agents[y].canKick << " ";
         }
         else if(y == AGENT_COUNT + 1)
         {
@@ -439,9 +636,14 @@ void PrintState(State* state, bool clearConsole)
         else if(y == AGENT_COUNT + 2)
         {
             std::cout << "Flames: [  ";
+            int cumulativeTime = 0;
             for(int i = 0; i < state->flames.count; i++)
             {
-                std::cout << state->flames[i].timeLeft << "  ";
+                if(state->flames[i].timeLeft != 0)
+                {
+                    cumulativeTime += state->flames[i].timeLeft;
+                    std::cout << cumulativeTime << "  ";
+                }
             }
             std::cout << "]";
         }
@@ -449,11 +651,56 @@ void PrintState(State* state, bool clearConsole)
     }
 }
 
+void PrintBoard(const Board* board, bool clearConsole)
+{
+    // clears console on linux
+    if(clearConsole)
+        std::cout << "\033c";
+
+    for(int y = 0; y < BOARD_SIZE; y++)
+    {
+        for(int x = 0; x < BOARD_SIZE; x++)
+        {
+            int item = board->items[y][x];
+            std::cout << PrintItem(item);
+        }
+        std::cout << std::endl;
+    }
+}
+
+template <typename T, int c>
+void _printArray(const T arr[c])
+{
+    std::cout << "[";
+
+    for(int i = 0; i < c - 1; i++)
+    {
+        std::cout << arr[i] << ", ";
+    }
+
+    if(c > 0)
+    {
+        std::cout << arr[c-1];
+    }
+
+    std::cout << "]";
+}
+
+void PrintObservation(const Observation* obs, bool clearConsole)
+{
+    PrintBoard(obs, clearConsole);
+
+    std::cout << "IsAlive: ";
+    _printArray<bool, AGENT_COUNT>(obs->isAlive);
+    std::cout << std::endl;
+
+    std::cout << "IsEnemy: ";
+    _printArray<bool, AGENT_COUNT>(obs->isEnemy);
+    std::cout << std::endl;
+}
+
 std::string PrintItem(int item)
 {
-    std::string wood = "[\u25A0]";
-    std::string fire = " \U0000263C ";
-
     switch(item)
     {
         case Item::PASSAGE:
@@ -468,15 +715,20 @@ std::string PrintItem(int item)
             return " \u24C7 ";
         case Item::KICK:
             return " \u24C0 ";
+        case Item::FOG:
+            return "[@]";
     }
+
     if(IS_WOOD(item))
     {
-        return FBLU(wood);
+        return FBLU((std::string)"[\u25A0]");
     }
+
     if(IS_FLAME(item))
     {
-        return FRED(fire);
+        return FRED((std::string)" \U0000263C ");
     }
+
     //agent number
     if(item >= Item::AGENT0)
     {
@@ -484,6 +736,7 @@ std::string PrintItem(int item)
     }
     else
     {
+        // unknown item
         return "[?]";
     }
 }

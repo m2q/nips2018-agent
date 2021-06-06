@@ -38,7 +38,7 @@ template <typename T, int N>
 inline RMapInfo TryAdd(const State& s, FixedQueue<T, N>& q, RMap& r, Position& c, int cx, int cy)
 {
     int dist = r.GetDistance(c.x, c.y);
-    int item = s.board[cy][cx];
+    int item = s.items[cy][cx];
     if(!util::IsOutOfBounds(cx, cy) &&
             r.GetDistance(cx, cy) == 0 &&
             (IS_WALKABLE(item) || item >= Item::AGENT0))
@@ -123,9 +123,10 @@ Move MoveTowardsSafePlace(const State& state, const RMap& r, int radius)
 {
     int originX = r.source.x;
     int originY = r.source.y;
-    for(int y = originY - radius; y < radius; y++)
+    // TODO: Should be y < originY + radius (?)
+    for(int y = originY - radius; y < originY + radius; y++)
     {
-        for(int x = originX - radius; x < radius; x++)
+        for(int x = originX - radius; x < originY + radius; x++)
         {
             if(util::IsOutOfBounds({x, y}) ||
                     std::abs(x - originX) + std::abs(y - originY) > radius) continue;
@@ -149,7 +150,7 @@ Move MoveTowardsPowerup(const State& state, const RMap& r, int radius)
             if(util::IsOutOfBounds(x, y) ||
                     std::abs(x - a.x) + std::abs(y - a.y) > radius) continue;
 
-            if(IS_POWERUP(state.board[y][x]))
+            if(IS_POWERUP(state.items[y][x]))
             {
                 return MoveTowardsPosition(r, {x, y});
             }
@@ -165,6 +166,8 @@ Move MoveTowardsEnemy(const State& state, const RMap& r, int radius)
 
     for(int i = 0; i < AGENT_COUNT; i++)
     {
+        // TODO: Skip own id (?)
+
         const AgentInfo& inf = state.agents[i];
 
         if((inf.x == a.x && inf.y == a.y) || inf.dead) continue;
@@ -186,7 +189,7 @@ Move MoveTowardsEnemy(const State& state, const RMap& r, int radius)
 
 bool _CheckPos(const State& state, int x, int y)
 {
-    return !util::IsOutOfBounds(x, y) && IS_WALKABLE(state.board[y][x]);
+    return !util::IsOutOfBounds(x, y) && IS_WALKABLE(state.items[y][x]);
 }
 
 bool _safe_condition(int danger, int min)
@@ -300,7 +303,10 @@ bool IsAdjacentEnemy(const State& state, int agentID, int distance)
 
     for(int i = 0; i < bboard::AGENT_COUNT; i++)
     {
+        // ignore self and dead agents
         if(i == agentID || state.agents[i].dead) continue;
+        // ignore team
+        if(a.team != 0 && a.team == state.agents[i].team) continue;
 
         // manhattan dist
         if((std::abs(state.agents[i].x - a.x) +
@@ -324,11 +330,11 @@ bool IsAdjacentItem(const State& state, int agentID, int distance, Item item)
             if(util::IsOutOfBounds(x, y) ||
                     std::abs(x - originX) + std::abs(y - originY) > distance) continue;
 
-            if(IS_WOOD(item) && IS_WOOD(state.board[y][x]))
+            if(IS_WOOD(item) && IS_WOOD(state.items[y][x]))
             {
                 return true;
             }
-            if(state.board[y][x] == item)
+            if(state.items[y][x] == item)
             {
                 return true;
             }

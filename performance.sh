@@ -1,11 +1,14 @@
 #! /bin/sh
-make -s main
-make -s test
+mkdir -p Release
+cd Release
+cmake -DCMAKE_BUILD_TYPE=Release ..
+
+make pomcpp_test
 if [ "$#" -eq 0 ]; then
-	(cd bin/ && ./test "[performance]")
+	(./pomcpp_test "[performance]")
 else
 	if [ "$1" = "-t" ]; then
-		(cd bin/ && ./test "[performance]" --threads $2)
+		(./pomcpp_test "[performance]" --threads $2)
 	else
 		echo "Didn't recognize argument. Use -t x for concurrent testing."
 	fi

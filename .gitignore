@@ -1,12 +1,12 @@
 # exclude binaries, object files and static libraries
-bin/
-lib/
-build/
+Release/
 
 # exclude personal IDE project files
 .qtcreator.*
-.creator.*
+*.creator.*
 *.qtcreator.*
+
+CMakeLists.txt.user
 
 # exclude autosave files from qtcreator
 *.autosave
